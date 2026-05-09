@@ -1,12 +1,12 @@
 "use client";
-import Image from "next/image";
+
 import { useState, useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
 import { useRouter, usePathname } from "next/navigation";
 import { api } from "@/lib/api";
 import { 
   LayoutDashboard, ShoppingCart, Users, LineChart, 
-  FileText, Package, User, ClipboardList, RotateCcw, AlertTriangle, Gift,
+  FileText, Package, User, ClipboardList, RotateCcw, Gift,
   Building2, Box, Clock, CheckCircle, Calendar, Inbox, Search
 } from "lucide-react";
 
@@ -262,7 +262,6 @@ type Delivery = {
   status: "PENDING" | "PARTIALLY_RECEIVED" | "DELIVERED" | "CANCELLED";
   totalItems: number; notes?: string; createdAt: string;
   supplier?: { id: string; supplierName: string };
-  employee?: { id: string; name: string; role: string };
   items: DeliveryItem[];
 };
 
@@ -272,9 +271,9 @@ type LineItem = {
   unit: CaseUnit;
 };
 
-type DeliveryForm = { supplierId: string; lineItems: LineItem[]; notes: string };
+type DeliveryForm = { supplierId: string; deliveryDate: string; lineItems: LineItem[]; notes: string };
 type Supplier    = { id: string; supplierName: string };
-type Product     = { id: string; productName: string; price: number; supplierId?: string; supplier?: { id: string; supplierName: string } | string; status?: string; stockUnit?: string; stockQuantity?: number; size?: string | null };
+type Product     = { id: string; productName: string; price: number; supplierId?: string; supplier?: string; status?: string; stockUnit?: string; stockQuantity?: number; size?: string | null };
 type ReceiveQty  = { deliveryItemId: string; receivedQty: number };
 
 const STATUS_CONFIG: Record<string, { bg: string; text: string }> = {
@@ -293,28 +292,19 @@ const navItems = [
   { label: "Product Management",    icon: Package, path: "/product"        },
   { label: "Account Management",    icon: User, path: "/account"        },
   { label: "Purchase Order",        icon: ClipboardList, path: "/purchase-order" },
-  { label: "Loss Report",               icon: AlertTriangle, path: "/loss-report"         },
+  { label: "Return",               icon: RotateCcw, path: "/return"         },
   { label: "Promo Management",      icon: Gift, path: "/promo"          },
 ];
 
 const ITEMS_PER_PAGE = 8;
 const emptyLineItem  = (): LineItem => ({ productId: "", productName: "", quantity: 1, unitPrice: 0, unit: "case_24" });
 const makeEmptyForm  = (): DeliveryForm => ({
-  supplierId: "",
+  supplierId: "", deliveryDate: new Date().toISOString().split("T")[0],
   lineItems: [emptyLineItem()],
   notes: "",
 });
 
 type Tab = "create" | "receiving" | "history";
-
-// Helper to get product name from allProducts
-const getProductName = (productId: string, allProducts: Product[], deliveryItems?: DeliveryItem[]) => {
-  // First check if the item has product info attached (from API)
-  const fromItem = deliveryItems?.find(item => item.productId === productId)?.product?.productName;
-  if (fromItem) return fromItem;
-  // Fallback to allProducts
-  return allProducts.find(p => p.id === productId)?.productName || productId;
-};
 
 // ─── PRODUCT DROPDOWN (custom, no native select) ──────────────────────────────
 function ProductSelect({
@@ -457,7 +447,7 @@ export default function PurchaseOrderPage() {
       setSuppliers((Array.isArray(s) ? s : []).filter((sup: { status?: string }) => sup.status !== "INACTIVE"));
       const normalized = (Array.isArray(p) ? p : []).map((prod: Product) => ({
         ...prod,
-        supplierId: prod.supplierId || (typeof prod.supplier === 'object' ? prod.supplier?.id : prod.supplier) || "",
+        supplierId: prod.supplierId || prod.supplier || "",
         stockQuantity: prod.stockQuantity ?? 0,
         stockUnit: (prod.stockUnit as CaseUnit) || "case_24",
       }));
@@ -482,10 +472,8 @@ export default function PurchaseOrderPage() {
     if (validLineItems.length === 0) { setCreateError("Please add at least one product."); return; }
     try {
       setSaving(true); setCreateError("");
-      const employeeId = localStorage.getItem("userId") || "";
       const res = await api.createDelivery({
-        supplierId: form.supplierId,
-        employeeId,
+        supplierId: form.supplierId, deliveryDate: form.deliveryDate,
         totalItems: validLineItems.reduce((s, i) => s + Number(i.quantity), 0),
         notes: form.notes || "",
         items: validLineItems.map((i) => ({
@@ -561,7 +549,7 @@ export default function PurchaseOrderPage() {
 
   const handleExport = () => {
     const headers = ["ID","Supplier","Delivery Date","Total Items","Status","Notes"];
-    const rows    = deliveries.map((d) => [d.id, d.supplier?.supplierName || d.supplierId, new Date(d.createdAt || d.deliveryDate).toLocaleDateString(), d.totalItems, d.status, d.notes || ""]);
+    const rows    = deliveries.map((d) => [d.id, d.supplier?.supplierName || d.supplierId, new Date(d.deliveryDate).toLocaleDateString(), d.totalItems, d.status, d.notes || ""]);
     const a = document.createElement("a");
     a.href = URL.createObjectURL(new Blob([[headers, ...rows].map((r) => r.join(",")).join("\n")], { type: "text/csv" }));
     a.download = "deliveries.csv"; a.click();
@@ -634,9 +622,9 @@ export default function PurchaseOrderPage() {
               <div className="flex items-center gap-2 p-3 bg-gray-50 rounded-xl border border-gray-100">
                 <Calendar className="w-4 h-4 text-gray-400" />
                 <div>
-                  <p className="text-xs text-gray-400">Delivery Date Created</p>
+                  <p className="text-xs text-gray-400">Delivery Date</p>
                   <p className="text-sm font-medium text-gray-700">
-                    {new Date().toLocaleDateString("en-PH", { weekday: "short", month: "long", day: "numeric", year: "numeric" })}
+                    {form.deliveryDate ? new Date(form.deliveryDate + "T00:00:00").toLocaleDateString("en-PH", { weekday: "short", month: "long", day: "numeric", year: "numeric" }) : "Not set"}
                   </p>
                 </div>
               </div>
@@ -699,11 +687,8 @@ export default function PurchaseOrderPage() {
 
       {/* ── Sidebar ── */}
       <aside className="hidden md:flex w-52 bg-white flex-col py-6 px-4 border-r border-gray-100 shrink-0">
-        <div className="text-center mb-6">
-          <div className="w-24 h-24 rounded-full overflow-hidden mx-auto border-0 relative">
-            <Image src="/logo-new.png" alt="Logo" fill className="object-cover" sizes="96px" />
-          </div>
-          <p className="text-xs font-extrabold text-indigo-900 leading-tight tracking-wide mt-3">JULIETA SOFTDRINKS<br />STORE</p>
+        <div className="text-center mb-10">
+          <p className="text-xs font-extrabold text-indigo-900 leading-tight tracking-wide">JULIETA SOFTDRINKS<br />STORE</p>
         </div>
         <nav className="flex flex-col gap-1">
           {navItems.map((item) => {
@@ -796,7 +781,7 @@ export default function PurchaseOrderPage() {
 
         <div className="flex-1 p-3 md:p-5 bg-green-50">
 
-          {/* CREATE */}
+          {/* ══ CREATE ══ */}
           {activeTab === "create" && (
             <div className="flex flex-col lg:flex-row gap-4">
               <div className="flex-1 flex flex-col gap-4">
@@ -839,7 +824,12 @@ export default function PurchaseOrderPage() {
                       />
                     </div>
 
-                    {/* Delivery date is set automatically to current date */}
+                    {/* ✅ Custom date field — calendar icon, readable date */}
+                    <DateField
+                      label="Delivery Date"
+                      value={form.deliveryDate}
+                      onChange={(v) => setForm({ ...form, deliveryDate: v })}
+                    />
                   </div>
                 </div>
 
@@ -1057,15 +1047,17 @@ export default function PurchaseOrderPage() {
                     </div>
                   )}
 
-                  <div className="mb-4 flex items-center gap-2 p-2.5 bg-gray-50 rounded-xl border border-gray-100">
-                    <Calendar className="w-4 h-4 text-gray-400" />
-                    <div>
-                      <p className="text-xs text-gray-400">Delivery Date Created</p>
-                      <p className="text-xs font-semibold text-gray-700">
-                        {new Date().toLocaleDateString("en-PH", { weekday: "short", month: "short", day: "numeric", year: "numeric" })}
-                      </p>
+                  {form.deliveryDate && (
+                    <div className="mb-4 flex items-center gap-2 p-2.5 bg-gray-50 rounded-xl border border-gray-100">
+                      <Calendar className="w-4 h-4 text-gray-400" />
+                      <div>
+                        <p className="text-xs text-gray-400">Delivery Date</p>
+                        <p className="text-xs font-semibold text-gray-700">
+                          {new Date(form.deliveryDate + "T00:00:00").toLocaleDateString("en-PH", { weekday: "short", month: "short", day: "numeric", year: "numeric" })}
+                        </p>
+                      </div>
                     </div>
-                  </div>
+                  )}
 
                   {validLineItems.length === 0 ? (
                     <div className="flex flex-col items-center justify-center py-8 text-center">
@@ -1114,7 +1106,7 @@ export default function PurchaseOrderPage() {
             </div>
           )}
 
-          {/* RECEIVING */}
+          {/* ══ RECEIVING ══ */}
           {activeTab === "receiving" && (
             <div className="flex flex-col lg:flex-row gap-4">
               <div className="flex-1">
@@ -1136,8 +1128,8 @@ export default function PurchaseOrderPage() {
                         <tr className="bg-indigo-900 text-white text-xs">
                           <th className="p-3 text-left">Delivery ID</th>
                           <th className="p-3 text-left">Supplier</th>
-                          <th className="p-3 text-left">Delivery Date Created</th>
-                          <th className="p-3 text-left">Products</th>
+                          <th className="p-3 text-left">Date</th>
+                          <th className="p-3 text-left">Items</th>
                           <th className="p-3 text-left">Status</th>
                           <th className="p-3 text-left">Actions</th>
                         </tr>
@@ -1151,19 +1143,11 @@ export default function PurchaseOrderPage() {
                           <tr key={row.id} className={`border-b border-gray-100 hover:bg-gray-50 ${receivingDelivery?.id === row.id ? "bg-indigo-50" : ""}`}>
                             <td className="p-3"><span className="bg-gray-700 text-white px-3 py-1 rounded-full text-xs font-mono">{row.id.slice(0, 8)}...</span></td>
                             <td className="p-3 text-gray-700">{row.supplier?.supplierName || row.supplierId}</td>
-                            <td className="p-3 text-gray-500 text-xs">{new Date(row.createdAt || row.deliveryDate).toLocaleDateString()}</td>
-                            <td className="p-3 text-gray-600 text-xs max-w-xs">
-                              <div className="space-y-1">
-                                {row.items?.slice(0, 2).map((item, idx) => (
-                                  <div key={idx} className="truncate">{item.product?.productName || allProducts.find(p => p.id === item.productId)?.productName || item.productId}</div>
-                                ))}
-                                {(row.items?.length || 0) > 2 && <p className="text-gray-400 text-xs">+{(row.items?.length || 0) - 2} more</p>}
-                              </div>
-                            </td>
+                            <td className="p-3 text-gray-500 text-xs">{new Date(row.deliveryDate).toLocaleDateString()}</td>
+                            <td className="p-3 text-center text-gray-700">{row.items?.length || 0}</td>
                             <td className="p-3"><span className={`px-2 py-1 rounded-full text-xs font-medium ${STATUS_CONFIG[row.status]?.bg} ${STATUS_CONFIG[row.status]?.text}`}>{row.status}</span></td>
                             <td className="p-3">
                               <div className="flex gap-1">
-                                <button onClick={() => setViewDelivery(row)} className="border border-indigo-300 text-indigo-600 hover:bg-indigo-50 rounded-lg px-2 py-1 text-xs font-medium">View</button>
                                 <button onClick={() => openReceiveModal(row)} className="border border-green-300 text-green-600 hover:bg-green-50 rounded-lg px-2 py-1 text-xs font-medium">✓ Receive</button>
                                 <button onClick={() => handleCancel(row.id)} className="border border-red-200 text-red-500 hover:bg-red-50 rounded-lg px-2 py-1 text-xs font-medium">Cancel</button>
                               </div>
@@ -1244,7 +1228,7 @@ export default function PurchaseOrderPage() {
             </div>
           )}
 
-          {/* HISTORY */}
+          {/* ══ HISTORY ══ */}
           {activeTab === "history" && (
             <div className="bg-white rounded-2xl p-4 md:p-5 shadow-sm">
               <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
@@ -1265,7 +1249,7 @@ export default function PurchaseOrderPage() {
                     </button>
                     {showHistoryStatusDrop && (
                       <div className="absolute top-10 left-0 bg-white border border-gray-200 rounded-xl shadow-lg z-50 w-48">
-                        {["All","PARTIALLY_RECEIVED","DELIVERED","CANCELLED"].map((opt) => (
+                        {["All","PENDING","PARTIALLY_RECEIVED","DELIVERED","CANCELLED"].map((opt) => (
                           <button key={opt} onClick={() => { setHistoryStatus(opt); setHistoryPage(1); setShowHistoryStatusDrop(false); }}
                             className={`w-full text-left px-4 py-2 text-sm hover:bg-gray-50 ${historyStatus === opt ? "text-indigo-600 font-semibold" : "text-gray-600"}`}>
                             {opt === "All" ? "All Status" : opt}
@@ -1284,6 +1268,7 @@ export default function PurchaseOrderPage() {
               <div className="flex gap-2 mb-4 flex-wrap">
                 {[
                   { label: "Total",     count: deliveries.length,                                              color: "bg-indigo-100 text-indigo-700" },
+                  { label: "Pending",   count: deliveries.filter(d => d.status==="PENDING").length,            color: "bg-yellow-100 text-yellow-800" },
                   { label: "Partial",   count: deliveries.filter(d => d.status==="PARTIALLY_RECEIVED").length, color: "bg-blue-100 text-blue-800"     },
                   { label: "Delivered", count: deliveries.filter(d => d.status==="DELIVERED").length,          color: "bg-green-100 text-green-800"   },
                   { label: "Cancelled", count: deliveries.filter(d => d.status==="CANCELLED").length,          color: "bg-red-100 text-red-700"       },
@@ -1296,41 +1281,23 @@ export default function PurchaseOrderPage() {
                     <tr className="bg-indigo-900 text-white text-xs">
                       <th className="p-3 text-left">ID</th>
                       <th className="p-3 text-left">Supplier</th>
-                      <th className="p-3 text-left">Employee</th>
-                      <th className="p-3 text-left">Products</th>
-                      <th className="p-3 text-left">Total</th>
+                      <th className="p-3 text-left">Delivery Date</th>
+                      <th className="p-3 text-left">Items</th>
                       <th className="p-3 text-left">Status</th>
                       <th className="p-3 text-left">Actions</th>
                     </tr>
                   </thead>
                   <tbody>
                     {loading ? (
-                      <tr><td colSpan={7} className="p-6 text-center text-gray-400">Loading...</td></tr>
+                      <tr><td colSpan={6} className="p-6 text-center text-gray-400">Loading...</td></tr>
                     ) : paginatedHistory.length === 0 ? (
-                      <tr><td colSpan={7} className="p-10 text-center"><div className="flex flex-col items-center gap-2"><Inbox className="w-8 h-8 text-gray-300" /><p className="text-gray-400 text-sm">No deliveries found.</p></div></td></tr>
+                      <tr><td colSpan={6} className="p-10 text-center"><div className="flex flex-col items-center gap-2"><Inbox className="w-8 h-8 text-gray-300" /><p className="text-gray-400 text-sm">No deliveries found.</p></div></td></tr>
                     ) : paginatedHistory.map((row) => (
                       <tr key={row.id} className="border-b border-gray-100 hover:bg-gray-50">
                         <td className="p-3"><span className="bg-gray-700 text-white px-3 py-1 rounded-full text-xs font-mono">{row.id.slice(0, 8)}...</span></td>
                         <td className="p-3 text-gray-700">{row.supplier?.supplierName || row.supplierId}</td>
-                        <td className="p-3 text-gray-600 text-xs">
-                          {row.employee ? (
-                            <div>
-                              <p className="font-medium">{row.employee.name}</p>
-                              <p className="text-gray-400">{row.employee.role}</p>
-                            </div>
-                          ) : "—"}
-                        </td>
-                        <td className="p-3 text-gray-600 text-xs max-w-xs">
-                          <div className="space-y-1">
-                            {row.items?.slice(0, 3).map((item, idx) => (
-                              <div key={idx} className="truncate">{item.product?.productName || allProducts.find(p => p.id === item.productId)?.productName || item.productId}</div>
-                            ))}
-                            {(row.items?.length || 0) > 3 && <p className="text-gray-400">+{(row.items?.length || 0) - 3} more</p>}
-                          </div>
-                        </td>
-                        <td className="p-3 text-gray-700 font-medium">
-                          ₱{row.items?.reduce((sum, item) => sum + (item.orderedQty * item.costPrice), 0).toLocaleString() || 0}
-                        </td>
+                        <td className="p-3 text-gray-500 text-xs">{new Date(row.deliveryDate).toLocaleDateString()}</td>
+                        <td className="p-3 text-center text-gray-700">{row.items?.length || 0}</td>
                         <td className="p-3"><span className={`px-3 py-1 rounded-full text-xs font-medium ${STATUS_CONFIG[row.status]?.bg} ${STATUS_CONFIG[row.status]?.text}`}>{row.status}</span></td>
                         <td className="p-3">
                           <div className="flex items-center gap-1">
@@ -1367,23 +1334,14 @@ export default function PurchaseOrderPage() {
                 <p className="text-xs text-gray-400 mb-1">Supplier</p>
                 <p className="text-sm font-medium text-gray-800">{viewDelivery.supplier?.supplierName || viewDelivery.supplierId}</p>
               </div>
-              {viewDelivery.employee && (
-                <div className="bg-gray-50 rounded-xl p-3">
-                  <p className="text-xs text-gray-400 mb-1">Created By</p>
-                  <p className="text-sm font-medium text-gray-800">{viewDelivery.employee.name}</p>
-                  <p className="text-xs text-gray-500">{viewDelivery.employee.role}</p>
-                </div>
-              )}
               <div className="grid grid-cols-2 gap-3">
                 <div className="bg-gray-50 rounded-xl p-3">
-                  <p className="text-xs text-gray-400 mb-1">Delivery Date Created</p>
-                  <p className="text-sm font-medium text-gray-800">{new Date(viewDelivery.createdAt || viewDelivery.deliveryDate).toLocaleDateString()}</p>
+                  <p className="text-xs text-gray-400 mb-1">Delivery Date</p>
+                  <p className="text-sm font-medium text-gray-800">{new Date(viewDelivery.deliveryDate).toLocaleDateString()}</p>
                 </div>
                 <div className="bg-gray-50 rounded-xl p-3">
-                  <p className="text-xs text-gray-400 mb-1">Total Amount</p>
-                  <p className="text-sm font-medium text-gray-800">
-                    ₱{viewDelivery.items?.reduce((sum, item) => sum + (item.orderedQty * item.costPrice), 0).toLocaleString() || 0}
-                  </p>
+                  <p className="text-xs text-gray-400 mb-1">Total Items</p>
+                  <p className="text-sm font-medium text-gray-800">{viewDelivery.totalItems}</p>
                 </div>
               </div>
               {viewDelivery.notes && (
@@ -1393,22 +1351,22 @@ export default function PurchaseOrderPage() {
                 </div>
               )}
               <div className="bg-gray-50 rounded-xl p-3">
-                <p className="text-xs text-gray-400 mb-2">Products Ordered</p>
+                <p className="text-xs text-gray-400 mb-2">Items</p>
                 <div className="space-y-3">
                   {viewDelivery.items?.map((item, idx) => {
                     const unitInfo    = getUnit(item.unit || item.product?.stockUnit);
                     const orderedBtl  = unitInfo.bottlesPerCase ? item.orderedQty  * unitInfo.bottlesPerCase : null;
-                    const productName = item.product?.productName || allProducts.find(p => p.id === item.productId)?.productName || item.productId;
+                    const receivedBtl = unitInfo.bottlesPerCase ? item.receivedQty * unitInfo.bottlesPerCase : null;
                     return (
                       <div key={idx} className="py-2 border-b border-gray-100 last:border-0">
                         <div className="flex justify-between items-start">
                           <div className="flex-1">
                             <p className="font-medium text-sm text-gray-800">
-                              {productName}
+                              {item.product?.productName || item.productId}
                               {item.product?.size && <span className="text-gray-500 font-normal ml-1">{item.product.size}</span>}
                             </p>
                             <div className="flex items-center gap-1 mt-0.5">
-                              <UnitPill unit={item.unit || item.product?.stockUnit} qty={item.orderedQty} />
+                              <UnitPill unit={item.unit || item.product?.stockUnit} />
                               <span className="text-xs text-gray-400">{unitInfo.label}</span>
                             </div>
                             <div className="mt-1.5 space-y-0.5">
@@ -1416,22 +1374,20 @@ export default function PurchaseOrderPage() {
                                 Ordered: <span className="font-medium text-gray-700">{item.orderedQty} {unitInfo.short}</span>
                                 {orderedBtl !== null && <span className="text-indigo-500 ml-1">= {orderedBtl} btl</span>}
                               </p>
+                              <p className="text-xs text-gray-500">
+                                Received: <span className="font-medium text-green-600">{item.receivedQty} {unitInfo.short}</span>
+                                {receivedBtl !== null && <span className="text-green-500 ml-1">= {receivedBtl} btl</span>}
+                              </p>
+                              <p className="text-xs text-gray-500">
+                                Returned: <span className="font-medium text-red-500">{item.returnedQty} {unitInfo.short}</span>
+                              </p>
                             </div>
                           </div>
-                          <div className="text-right ml-3 shrink-0">
-                            <span className="text-sm font-medium text-gray-800">₱{(item.orderedQty * item.costPrice).toLocaleString()}</span>
-                            <p className="text-xs text-gray-400">₱{item.costPrice} each</p>
-                          </div>
+                          <span className="text-gray-500 text-xs ml-3 shrink-0">₱{item.costPrice}</span>
                         </div>
                       </div>
                     );
                   })}
-                </div>
-                <div className="mt-3 pt-3 border-t border-gray-200 flex justify-between">
-                  <p className="text-sm font-medium text-gray-600">Total Amount</p>
-                  <p className="text-lg font-bold text-indigo-700">
-                    ₱{viewDelivery.items?.reduce((sum, item) => sum + (item.orderedQty * item.costPrice), 0).toLocaleString() || 0}
-                  </p>
                 </div>
               </div>
             </div>
